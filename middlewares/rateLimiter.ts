@@ -50,7 +50,6 @@ const rateLimiter = (rules: RateLimitRule[]): Middleware => {
             const isBlocked = limiterStatuses.some(status => status && status.remainingPoints <= 0);
 
             if (isBlocked) {
-                console.log(`Rate limit exceeded for clientKey: ${clientKey}`);
                 ctx.status = 429;
                 ctx.body = 'Too Many Requests';
                 const retryAfter = Math.min(
