@@ -1,0 +1,9 @@
+{
+  "execMap": {
+    "ts": "ts-node"
+  },
+  "watch": ["app.ts", "middlewares/**/*.ts"],
+  "ext": "ts",
+  "ignore": ["dist/*"],
+  "exec": "ts-node ./app.ts"
+}
