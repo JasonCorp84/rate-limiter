@@ -1,15 +1,19 @@
 import Koa from 'koa';
 import Router from '@koa/router';
+import type { ParameterizedContext } from 'koa';
 import * as dotenv from 'dotenv';
 import rateLimiter from './middlewares/rateLimiter';
 
 dotenv.config();
 
-console.log('Environment Variables:', {
-    REDIS_HOST: process.env.REDIS_HOST,
-    REDIS_PORT: process.env.REDIS_PORT,
-    REDIS_PASSWORD: process.env.REDIS_PASSWORD,
-});
+// Avoid logging sensitive information in production
+if (process.env.NODE_ENV !== 'production') {
+    console.log('Environment Variables:', {
+        REDIS_HOST: process.env.REDIS_HOST,
+        REDIS_PORT: process.env.REDIS_PORT,
+        // REDIS_PASSWORD: process.env.REDIS_PASSWORD, // Don't log passwords
+    });
+}
 
 const app = new Koa();
 const router = new Router();
@@ -21,7 +25,8 @@ router.get(
         { points: 5, duration: 60 },
         { points: 20, duration: 300 }
     ]),
-    async (ctx) => {
+    async (ctx: ParameterizedContext) => {
+        // Consider validating ctx.params.applicationId here
         ctx.body = `Welcome to Emarsys, applicationId: ${ctx.params.applicationId}`;
     }
 );
