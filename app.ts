@@ -3,6 +3,7 @@ import Router from '@koa/router';
 import Redis from 'ioredis';
 import * as dotenv from 'dotenv';
 import rateLimiter from './middlewares/rateLimiter';
+import redis from './config/redis';
 
 dotenv.config();
 
@@ -15,32 +16,6 @@ console.log('Environment Variables:', {
 const app = new Koa();
 const router = new Router();
 const PORT = process.env.PORT || 3000;
-
-const redisPort = Number(process.env.REDIS_PORT);
-console.log('Parsed REDIS_PORT:', redisPort);
-
-const redis = new Redis({
-    host: process.env.REDIS_HOST,
-    port: redisPort, // Use the parsed number
-    password: process.env.REDIS_PASSWORD || undefined,
-});
-
-redis.on('connect', () => {
-    console.log('Connected to Redis');
-});
-
-redis.on('error', (err) => {
-    console.error('Redis connection error:', err);
-});
-
-redis.ping()
-    .then((res) => {
-        console.log('Redis connection test successful:', res); // "PONG"
-    })
-    .catch((err) => {
-        console.error('Redis connection test failed:', err);
-});
-
 
 router.get(
     '/emarsys/:applicationId',
