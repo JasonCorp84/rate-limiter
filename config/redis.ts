@@ -14,4 +14,12 @@ redis.on('error', (err) => {
     console.error('Redis connection error:', err);
 });
 
+redis.ping()
+    .then((res) => {
+        console.log('Redis connection test successful:', res); // "PONG"
+    })
+    .catch((err) => {
+        console.error('Redis connection test failed:', err);
+});
+
 export default redis;

@@ -1,9 +1,7 @@
 import Koa from 'koa';
 import Router from '@koa/router';
-import Redis from 'ioredis';
 import * as dotenv from 'dotenv';
 import rateLimiter from './middlewares/rateLimiter';
-import redis from './config/redis';
 
 dotenv.config();
 
