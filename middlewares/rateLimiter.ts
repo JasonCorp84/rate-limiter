@@ -3,7 +3,7 @@ import { Middleware } from 'koa';
 import { RateLimiterRedis, RateLimiterRes } from 'rate-limiter-flexible';
 
 /**
- * Sliding Window Algorythm - Represents a rate-limiting rule. 
+ * Represents a rate-limiting rule. 
  * 
  * @property points - The maximum number of requests allowed within the specified duration.
  * @property duration - The time window for the rate limit, in seconds.
