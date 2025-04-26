@@ -1,5 +1,5 @@
-import redis from '../config/redis';
 import { Middleware, Context, Next } from 'koa';
+import redis from '../config/redis';
 import { validateRateLimitRules, RateLimitRule } from '../utils/rateLimitHelpers';
 
 function buildRedisKey(ruleIdx: number, clientKey: string): string {
