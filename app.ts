@@ -6,12 +6,10 @@ import rateLimiter from './middlewares/rateLimiter';
 
 dotenv.config();
 
-// Avoid logging sensitive information in production
 if (process.env.NODE_ENV !== 'production') {
     console.log('Environment Variables:', {
         REDIS_HOST: process.env.REDIS_HOST,
         REDIS_PORT: process.env.REDIS_PORT,
-        // REDIS_PASSWORD: process.env.REDIS_PASSWORD, // Don't log passwords
     });
 }
 
@@ -26,7 +24,6 @@ router.get(
         { points: 20, duration: 300 }
     ]),
     async (ctx: ParameterizedContext) => {
-        // Consider validating ctx.params.applicationId here
         ctx.body = `Welcome to Emarsys, applicationId: ${ctx.params.applicationId}`;
     }
 );

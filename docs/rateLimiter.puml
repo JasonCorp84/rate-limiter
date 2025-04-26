@@ -1,0 +1,53 @@
+' filepath: c:\Users\csaba\emarsys\docs\rateLimiter.puml
+@startuml
+title Sliding Window RateLimiter Middleware (TypeScript, Koa, Redis)
+
+' Legend:
+' - clientKey: A unique identifier for the client, typically `${ctx.ip}:${ctx.params?.applicationId || 'unknown'}`
+' - redisKey: The Redis key for a rule and client, constructed as `swl:<ruleIdx>:<clientKey>`
+'   We build different redisKeys for each rule so each rule is tracked separately in Redis.
+'   This allows multiple independent limits (e.g., per-minute and per-hour) for the same client.
+' - ZREMRANGEBYSCORE: Removes old request timestamps outside the sliding window.
+' - ZCARD: Counts the number of requests in the current window.
+' - ZADD: Adds the current request timestamp to the sorted set.
+' - ZRANGE: Gets the oldest request timestamp to calculate when the window resets.
+' - EXPIRE: Sets a TTL on the Redis key to auto-cleanup unused keys.
+' - Headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After
+
+actor Client
+participant "Koa Middleware\n(rateLimiter)" as Middleware
+participant "Redis"
+participant "Next Middleware" as Next
+
+Client -> Middleware: HTTP Request (e.g., GET /test/app1)
+activate Middleware
+
+Middleware -> Middleware: validateRateLimitRules(rules)
+Middleware -> Middleware: build clientKey\n(e.g., `${ctx.ip}:${ctx.params?.applicationId}`)
+
+loop For each rule
+    Middleware -> Middleware: build redisKey\n(`swl:<ruleIdx>:<clientKey>`)\n(Each rule tracked separately)
+    Middleware -> Redis: ZREMRANGEBYSCORE(redisKey, 0, windowStart)\n(Remove old requests, that are outside the sliding window)
+    Middleware -> Redis: ZCARD(redisKey)\n(Count requests in window)
+    alt If over limit
+        Middleware -> Redis: ZRANGE(redisKey, 0, 0, WITHSCORES)\n(Get oldest request)
+        Middleware -> Middleware: Calculate reset, set blocked
+    else If under limit
+        Middleware -> Redis: ZADD(redisKey, now, value)\n(Add current request)
+        Middleware -> Redis: EXPIRE(redisKey, rule.duration + 1)\n(Set TTL for cleanup)
+        Middleware -> Middleware: Update strictestRemaining, strictestReset
+    end
+end
+
+Middleware -> Middleware: buildRateLimitHeaders()
+Middleware -> Middleware: ctx.set(header, value)\n(Set X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, Retry-After)
+
+alt If blocked
+    Middleware -> Middleware: ctx.status = 429, ctx.body = "Too Many Requests"
+    deactivate Middleware
+else
+    Middleware -> Next: await next()
+    deactivate Middleware
+end
+
+@enduml

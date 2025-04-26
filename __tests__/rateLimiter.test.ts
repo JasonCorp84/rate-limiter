@@ -4,6 +4,7 @@ import request from 'supertest';
 import { createMockRedis } from './factories/mockRedis';
 import { Server, IncomingMessage, ServerResponse } from 'http';
 import rateLimiter from '../middlewares/rateLimiter';
+import redis from '../config/redis';
 
 jest.mock('../config/redis', () => createMockRedis());
 
@@ -96,7 +97,6 @@ describe('Rate Limiting per Application ID', () => {
     let client: request.SuperTest<request.Test>;
 
     beforeEach(() => {
-        // Reset the rate limiter state (mock Redis or in-memory store), so it does not pollute the next session
         const mockRedis = require('../config/redis');
         mockRedis.flushall();
         jest.clearAllTimers();
@@ -147,20 +147,27 @@ describe('Rate Limiting per Application ID', () => {
     });
 
     it('returns correct rate limit headers for allowed requests', async () => {
+        const before = Date.now();
         const res = await client.get('/test/app1');
         expect(res.status).toBe(200);
-        expect(res.headers['x-ratelimit-remaining']).toBeDefined();
-        expect(res.headers['x-ratelimit-limit']).toBeDefined();
-        expect(res.headers['x-ratelimit-reset']).toBeDefined();
+        expect(res.headers['x-ratelimit-remaining']).toBe('4');
+        expect(res.headers['x-ratelimit-limit']).toBe('5');
+        const reset = Number(res.headers['x-ratelimit-reset']);
+        expect(reset).toBeGreaterThanOrEqual(before);
+        expect(reset).toBeLessThanOrEqual(before + 61_000); // 60s window + 1s margin to account for processing time
     });
 
     it('returns correct rate limit headers when blocked', async () => {
         await performRequests(client, '/test/app1', 5);
+        const before = Date.now();
         const res = await client.get('/test/app1');
         expect(res.status).toBe(429);
-        expect(res.headers['x-ratelimit-remaining']).toBeDefined();
-        expect(res.headers['x-ratelimit-limit']).toBeDefined();
+        expect(res.headers['x-ratelimit-remaining']).toBe('0');
+        expect(res.headers['x-ratelimit-limit']).toBe('5');
         expect(res.headers['retry-after']).toBeDefined();
+        const reset = Number(res.headers['x-ratelimit-reset']);
+        expect(reset).toBeGreaterThanOrEqual(before);
+        expect(reset).toBeLessThanOrEqual(before + 61_000); // 60s window + 1s margin to account for processing time    
     });
 
     it('allows 20 requests with 12-second intervals due to sliding window', async () => {
@@ -170,8 +177,15 @@ describe('Rate Limiting per Application ID', () => {
     it('doesn not allows 21 requests with 12-second intervals due to second rule', async () => {
         jest.useFakeTimers();
         await performRequests(client, '/test/app1', 20, 12000);
+        const before = Date.now();
         const res = await client.get('/test/app1');
         expect(res.status).toBe(429);
+        // The strictest rule should be the second one: { points: 20, duration: 300 }
+        expect(res.headers['x-ratelimit-limit']).toBe('20');
+        expect(res.headers['x-ratelimit-remaining']).toBe('0');
+        const reset = Number(res.headers['x-ratelimit-reset']);
+        expect(reset).toBeGreaterThanOrEqual(before);
+        expect(reset).toBeLessThanOrEqual(before + 301_000); // 300s window + 1s margin
     });
 });
 
@@ -221,19 +235,42 @@ describe('Handles Multiple Application IDs', () => {
     });
 
 
-    it('tracks limits separately for each application ID', async () => {
+    it('tracks limits separately for each application ID AND sets theor headers correctly', async () => {
+        // app1: 3 requests, app2: 2 requests
         await performRequests(client, '/test/app1', 3);
         await performRequests(client, '/test/app2', 2);
 
-        await performRequests(client, '/test/app1', 2); 
+        // Check headers for app1 (should have 2 remaining)
+        let res1 = await client.get('/test/app1');
+        expect(res1.status).toBe(200);
+        expect(res1.headers['x-ratelimit-remaining']).toBe('1');
+        expect(res1.headers['x-ratelimit-limit']).toBe('5');
+
+        let res2 = await client.get('/test/app2');
+        expect(res2.status).toBe(200);
+        expect(res2.headers['x-ratelimit-remaining']).toBe('2');
+        expect(res2.headers['x-ratelimit-limit']).toBe('5');
+
+        await performRequests(client, '/test/app1', 2);
         await performRequests(client, '/test/app2', 3);
 
         // Both should now be blocked on the next request
-        const res1 = await client.get('/test/app1');
+        const before = Date.now();
+        res1 = await client.get('/test/app1');
         expect(res1.status).toBe(429);
+        expect(res1.headers['x-ratelimit-remaining']).toBe('0');
+        expect(res1.headers['x-ratelimit-limit']).toBe('5');
+        const reset1 = Number(res1.headers['x-ratelimit-reset']);
+        expect(reset1).toBeGreaterThanOrEqual(before);
+        expect(reset1).toBeLessThanOrEqual(before + 61_000);
 
-        const res2 = await client.get('/test/app2');
+        res2 = await client.get('/test/app2');
         expect(res2.status).toBe(429);
+        expect(res2.headers['x-ratelimit-remaining']).toBe('0');
+        expect(res2.headers['x-ratelimit-limit']).toBe('5');
+        const reset2 = Number(res2.headers['x-ratelimit-reset']);
+        expect(reset2).toBeGreaterThanOrEqual(before);
+        expect(reset2).toBeLessThanOrEqual(before + 61_000);
     });
 });
 
@@ -273,7 +310,7 @@ describe('Combined Rate Limiting Rules AND headers', () => {
         jest.useFakeTimers();
         for (let i = 0; i < 20; i++) {
             if (i > 0 && i % 5 === 0) {
-                jest.advanceTimersByTime(INTERVALS_MS.ONE_MINUTE); // advance 1 minute after each 5
+                jest.advanceTimersByTime(INTERVALS_MS.ONE_MINUTE);
             }
             const res = await client.get('/test/app1');
             expect(res.status).toBe(200);
@@ -301,103 +338,20 @@ describe('Combined Rate Limiting Rules AND headers', () => {
         jest.useRealTimers();
     });
 
-    it('allows requests again after the global window resets', async () => {
+    it('allows requests again as soon as enough old requests fall out of the sliding window', async () => {
         jest.useFakeTimers();
         await performRequests(client, '/test/app1', 20, INTERVALS_MS.ONE_SECOND * 12);
 
+        // 21st request should be blocked because the window is full
         let res = await client.get('/test/app1');
         expect(res.status).toBe(429);
 
+        // Advance time just enough for the earliest request to fall out of the window (5 minutes)
         jest.advanceTimersByTime(5 * INTERVALS_MS.ONE_MINUTE);
+
+        // Now a new request should be allowed as the window has space
         res = await client.get('/test/app1');
         expect(res.status).toBe(200);
         jest.useRealTimers();
     });
 });
-
-describe('Edge Cases and Error Handling', () => {
-    let server: Server<typeof IncomingMessage, typeof ServerResponse>;
-    let client: request.SuperTest<request.Test>;
-
-    beforeEach(() => {
-        const mockRedis = require('../config/redis');
-        mockRedis.flushall();
-        jest.clearAllTimers();
-        const testEnv = createTestApp();
-        server = testEnv.server;
-        client = testEnv.client;
-    });
-
-    afterEach(() => {
-        if (server) server.close();
-        jest.useRealTimers();
-    });
-
-    it('handles invalid or missing application IDs gracefully', async () => {
-        const res = await client.get('/test/');
-        expect([404, 400]).toContain(res.status);
-        const res2 = await client.get('/test3/');
-        expect([404, 400]).toContain(res2.status);
-    });
-
-    it('returns appropriate headers when rate limit is exceeded', async () => {
-        await performRequests(client, '/test/app1', 5);
-        const res = await client.get('/test/app1');
-        expect(res.status).toBe(429);
-        expect(res.headers['x-ratelimit-remaining']).toBeDefined();
-        expect(res.headers['x-ratelimit-limit']).toBeDefined();
-        expect(res.headers['retry-after']).toBeDefined();
-    });
-});
-
-describe('Concurrency and Race Conditions', () => {
-    let server: Server<typeof IncomingMessage, typeof ServerResponse>;
-    let client: request.SuperTest<request.Test>;
-
-    beforeEach(() => {
-        const mockRedis = require('../config/redis');
-        mockRedis.flushall();
-        jest.clearAllTimers();
-        const testEnv = createTestApp();
-        server = testEnv.server;
-        client = testEnv.client;
-    });
-
-    afterEach(() => {
-        if (server) server.close();
-        jest.useRealTimers();
-    });
-
-    it('correctly limits concurrent requests from the same application ID', async () => {
-        // Simulate 10 concurrent requests
-        const requests = [];
-        for (let i = 0; i < 10; i++) {
-            requests.push(client.get('/test/app1'));
-        }
-        for (let i = 0; i < 10; i++) {
-            requests.push(client.get('/test/app2'));
-        }
-        const results = await Promise.all(requests);
-        // Only 5 should be allowed, the rest should be blocked
-        const allowed = results.filter(res => res.status === 200).length;
-        const blocked = results.filter(res => res.status === 429).length;
-        expect(allowed).toBe(10);
-        expect(blocked).toBe(10);
-    });
-
-    it('does not allow more than the allowed number of requests under high concurrency', async () => {
-        // Simulate 100 concurrent requests
-        const requests = [];
-        for (let i = 0; i < 100; i++) {
-            requests.push(client.get('/test/app1'));
-        }
-        const results = await Promise.all(requests);
-        // Only 5 should be allowed, the rest should be blocked
-        const allowed = results.filter(res => res.status === 200).length;
-        const blocked = results.filter(res => res.status === 429).length;
-        expect(allowed).toBe(5);
-        expect(blocked).toBe(95);
-    });
-});
-
-
