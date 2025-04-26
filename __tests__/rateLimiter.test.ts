@@ -110,11 +110,11 @@ describe('Rate Limiting per Application ID', () => {
         jest.useRealTimers();
     });
 
-    it('allows up to 5 requests per minute for a single application ID', async () => {
+    it('allows exactly the configured number of requests per minute for a single application ID', async () => {
         await performRequests(client, '/test/app1', 5);
     });
 
-    it('X-RateLimit-Remaining decreases with each request', async () => {
+    it('decrements X-RateLimit-Remaining header with each successful request', async () => {
         const remainings: number[] = [];
         for (let i = 0; i < 5; i++) {
             const res = await client.get('/test/app1');
@@ -131,14 +131,14 @@ describe('Rate Limiting per Application ID', () => {
         expect(remainings[remainings.length - 1]).toBe(0);
     });
 
-    it('blocks the 6th request within a minute for a single application ID', async () => {
+    it('blocks requests that exceed the configured limit for a single application ID', async () => {
         await performRequests(client, '/test/app1', 5);
         const res = await client.get('/test/app1');
         expect(res.status).toBe(429);
         expect(res.text).toBe('Too Many Requests');
     });
 
-    it('resets the limit after the time window for a single application ID', async () => {
+    it('resets the rate limit after the configured time window for a single application ID', async () => {
         jest.useFakeTimers();
         await performRequests(client, '/test/app1', 5);
         jest.advanceTimersByTime(INTERVALS_MS.ONE_MINUTE);
@@ -146,7 +146,7 @@ describe('Rate Limiting per Application ID', () => {
         expect(res.status).toBe(200);
     });
 
-    it('returns correct rate limit headers for allowed requests', async () => {
+    it('returns correct rate limit headers for allowed requests (status 200)', async () => {
         const before = Date.now();
         const res = await client.get('/test/app1');
         expect(res.status).toBe(200);
@@ -157,7 +157,7 @@ describe('Rate Limiting per Application ID', () => {
         expect(reset).toBeLessThanOrEqual(before + 61_000); // 60s window + 1s margin to account for processing time
     });
 
-    it('returns correct rate limit headers when blocked', async () => {
+    it('returns correct rate limit headers when the request is blocked (status 429)', async () => {
         await performRequests(client, '/test/app1', 5);
         const before = Date.now();
         const res = await client.get('/test/app1');
@@ -170,11 +170,12 @@ describe('Rate Limiting per Application ID', () => {
         expect(reset).toBeLessThanOrEqual(before + 61_000); // 60s window + 1s margin to account for processing time    
     });
 
-    it('allows 20 requests with 12-second intervals due to sliding window', async () => {
+    it('allows 20 requests with 12-second intervals due to sliding window rule', async () => {
         jest.useFakeTimers();
         await performRequests(client, '/test/app1', 20, 12000);
     });
-    it('doesn not allows 21 requests with 12-second intervals due to second rule', async () => {
+
+    it('blocks the 21st request with 12-second intervals due to the second sliding window rule', async () => {
         jest.useFakeTimers();
         await performRequests(client, '/test/app1', 20, 12000);
         const before = Date.now();
@@ -235,7 +236,7 @@ describe('Handles Multiple Application IDs', () => {
     });
 
 
-    it('tracks limits separately for each application ID AND sets theor headers correctly', async () => {
+    it('tracks limits separately for each application ID AND sets their headers correctly', async () => {
         // app1: 3 requests, app2: 2 requests
         await performRequests(client, '/test/app1', 3);
         await performRequests(client, '/test/app2', 2);
