@@ -29,18 +29,20 @@ type TestEnv = {
 /**
  * Factory to create a test Koa app, router, and client with given rate limiter rules.
  */
-function createTestApp(rules = [{ points: 5, duration: 60 }, { points: 20, duration: 300 }]): TestEnv {
+const allServers: Server<typeof IncomingMessage, typeof ServerResponse>[] = [];
+function createTestApp(): TestEnv {
     const app = new Koa();
     const router = new Router();
     router.get(
         '/test/:applicationId',
-        rateLimiter(rules),
+        rateLimiter(),
         async (ctx) => {
             ctx.body = `Hello, applicationId: ${ctx.params.applicationId}`;
         }
     );
     app.use(router.routes()).use(router.allowedMethods());
     const server = app.listen();
+    allServers.push(server);
     const client = request.agent(server) as unknown as request.SuperTest<request.Test>;
     return { app, router, server, client };
 }
@@ -71,24 +73,42 @@ async function performRequests(
 describe('Configuration and Initialization', () => {
     let server: Server<typeof IncomingMessage, typeof ServerResponse>;
     let client: request.SuperTest<request.Test>;
+    let mockRedis: any;
+
+    beforeEach(() => {
+        mockRedis = require('../config/redis');
+        mockRedis.flushall();
+        jest.clearAllTimers();
+        // Set up a config for testApp
+        mockRedis.set('rateLimitConfig:testApp', JSON.stringify({ rules: [ { points: 2, duration: 10 } ] }));
+        const testEnv = createTestApp();
+        server = testEnv.server;
+        client = testEnv.client;
+    });
 
     afterEach(() => {
-        if (server) server.close();
+        // Ensure all servers are closed to prevent open handles
+        allServers.forEach(s => {
+            if (s && s.listening) s.close();
+        });
+        allServers.length = 0;
         jest.useRealTimers();
     });
 
-    it('initializes with custom rules', async () => {
-        const testEnv = createTestApp([{ points: 2, duration: 10 }]);
-        server = testEnv.server;
-        client = testEnv.client;
-        await performRequests(client, '/test/app1', 2);
-        const res = await client.get('/test/app1');
+    it('initializes with custom rules from Redis config', async () => {
+        await performRequests(client, '/test/testApp', 2);
+        const res = await client.get('/test/testApp');
         expect(res.status).toBe(429);
     });
 
-    it('throws an error if misconfigured', async () => {
-        // Simulate misconfiguration by passing an invalid rule
-        expect(() => createTestApp([{ points: -1, duration: 0 }])).toThrow();
+    it('throws an error if misconfigured (invalid rules in Redis)', async () => {
+        // Set an invalid config for appInvalid
+        mockRedis.set('rateLimitConfig:appInvalid', JSON.stringify({ rules: [ { points: -1, duration: 0 } ] }));
+        const testEnv = createTestApp();
+        const testClient = testEnv.client;
+        const res = await testClient.get('/test/appInvalid');
+        expect(res.status).toBe(503);
+        expect(res.text).toMatch(/Service Unavailable/);
     });
 });
 
@@ -100,13 +120,54 @@ describe('Rate Limiting per Application ID', () => {
         const mockRedis = require('../config/redis');
         mockRedis.flushall();
         jest.clearAllTimers();
+        // Set up configs for all appIds used in this suite
+        mockRedis.set('rateLimitConfig:app1', JSON.stringify({
+            rules: [
+                { points: 5, duration: 60 },
+                { points: 20, duration: 300 }
+            ]
+        }));
+        mockRedis.set('rateLimitConfig:app2', JSON.stringify({
+            rules: [
+                { points: 5, duration: 60 },
+                { points: 20, duration: 300 }
+            ]
+        }));
+        mockRedis.set('rateLimitConfig:app3', JSON.stringify({
+            rules: [
+                { points: 5, duration: 60 },
+                { points: 20, duration: 300 }
+            ]
+        }));
+        mockRedis.set('rateLimitConfig:app4', JSON.stringify({
+            rules: [
+                { points: 5, duration: 60 },
+                { points: 20, duration: 300 }
+            ]
+        }));
+        mockRedis.set('rateLimitConfig:app5', JSON.stringify({
+            rules: [
+                { points: 5, duration: 60 },
+                { points: 20, duration: 300 }
+            ]
+        }));
+        mockRedis.set('rateLimitConfig:app22', JSON.stringify({
+            rules: [
+                { points: 5, duration: 60 },
+                { points: 20, duration: 300 }
+            ]
+        }));
         const testEnv = createTestApp();
         server = testEnv.server;
         client = testEnv.client;
     });
 
     afterEach(() => {
-        if (server) server.close();
+        // Ensure all servers are closed to prevent open handles
+        allServers.forEach(s => {
+            if (s && s.listening) s.close();
+        });
+        allServers.length = 0;
         jest.useRealTimers();
     });
 
@@ -197,13 +258,54 @@ describe('Handles Multiple Application IDs', () => {
         const mockRedis = require('../config/redis');
         mockRedis.flushall();
         jest.clearAllTimers();
+        // Set up configs for all appIds used in this suite
+        mockRedis.set('rateLimitConfig:app1', JSON.stringify({
+            rules: [
+                { points: 5, duration: 60 },
+                { points: 20, duration: 300 }
+            ]
+        }));
+        mockRedis.set('rateLimitConfig:app2', JSON.stringify({
+            rules: [
+                { points: 5, duration: 60 },
+                { points: 20, duration: 300 }
+            ]
+        }));
+        mockRedis.set('rateLimitConfig:app3', JSON.stringify({
+            rules: [
+                { points: 5, duration: 60 },
+                { points: 20, duration: 300 }
+            ]
+        }));
+        mockRedis.set('rateLimitConfig:app4', JSON.stringify({
+            rules: [
+                { points: 5, duration: 60 },
+                { points: 20, duration: 300 }
+            ]
+        }));
+        mockRedis.set('rateLimitConfig:app5', JSON.stringify({
+            rules: [
+                { points: 5, duration: 60 },
+                { points: 20, duration: 300 }
+            ]
+        }));
+        mockRedis.set('rateLimitConfig:app22', JSON.stringify({
+            rules: [
+                { points: 5, duration: 60 },
+                { points: 20, duration: 300 }
+            ]
+        }));
         const testEnv = createTestApp();
         server = testEnv.server;
         client = testEnv.client;
     });
 
     afterEach(() => {
-        if (server) server.close();
+        // Ensure all servers are closed to prevent open handles
+        allServers.forEach(s => {
+            if (s && s.listening) s.close();
+        });
+        allServers.length = 0;
         jest.useRealTimers();
     });
 
@@ -283,14 +385,24 @@ describe('Combined Rate Limiting Rules AND headers', () => {
         const mockRedis = require('../config/redis');
         mockRedis.flushall();
         jest.clearAllTimers();
-
+        // Set up config for app1 used in this suite
+        mockRedis.set('rateLimitConfig:app1', JSON.stringify({
+            rules: [
+                { points: 5, duration: 60 },
+                { points: 20, duration: 300 }
+            ]
+        }));
         const testEnv = createTestApp();
         server = testEnv.server;
         client = testEnv.client;
     });
 
     afterEach(() => {
-        if (server) server.close();
+        // Ensure all servers are closed to prevent open handles
+        allServers.forEach(s => {
+            if (s && s.listening) s.close();
+        });
+        allServers.length = 0;
         jest.useRealTimers();
     });
 
@@ -355,4 +467,296 @@ describe('Combined Rate Limiting Rules AND headers', () => {
         expect(res.status).toBe(200);
         jest.useRealTimers();
     });
+});
+
+describe('Distributed Consistency (Multiple Pods/Containers)', () => {
+    let serverA: Server<typeof IncomingMessage, typeof ServerResponse>;
+    let clientA: request.SuperTest<request.Test>;
+    let serverB: Server<typeof IncomingMessage, typeof ServerResponse>;
+    let clientB: request.SuperTest<request.Test>;
+
+    beforeEach(() => {
+        const mockRedis = require('../config/redis');
+        mockRedis.flushall();
+        jest.clearAllTimers();
+        mockRedis.set('rateLimitConfig:app1', JSON.stringify({
+            rules: [
+                { points: 5, duration: 60 },
+                { points: 20, duration: 300 }
+            ]
+        }));
+        // Simulate two pods/containers with two app instances
+        const testEnvA = createTestApp();
+        serverA = testEnvA.server;
+        clientA = testEnvA.client;
+        const testEnvB = createTestApp();
+        serverB = testEnvB.server;
+        clientB = testEnvB.client;
+    });
+
+    afterEach(() => {
+        if (serverA) serverA.close();
+        if (serverB) serverB.close();
+        jest.useRealTimers();
+    });
+
+    it('enforces global rate limit across multiple app instances (pods)', async () => {
+        for (let i = 0; i < 3; i++) {
+            const res = await clientA.get('/test/app1');
+            expect(res.status).toBe(200);
+        }
+        for (let i = 0; i < 2; i++) {
+            const res = await clientB.get('/test/app1');
+            expect(res.status).toBe(200);
+        }
+        const resBlocked = await clientA.get('/test/app1');
+        expect(resBlocked.status).toBe(429);
+        const resBlockedB = await clientB.get('/test/app1');
+        expect(resBlockedB.status).toBe(429);
+    });
+});
+
+describe('Dynamic per-appId config from Redis', () => {
+    let server: Server<typeof IncomingMessage, typeof ServerResponse>;
+    let client: request.SuperTest<request.Test>;
+    let mockRedis: any;
+
+    beforeEach(() => {
+        mockRedis = require('../config/redis');
+        mockRedis.flushall();
+        jest.clearAllTimers();
+        // Set default config in Redis
+        mockRedis.set('rateLimitConfig:default', JSON.stringify({ rules: [ { points: 2, duration: 60 } ] }));
+        const testEnv = createTestApp();
+        server = testEnv.server;
+        client = testEnv.client;
+    });
+
+    afterEach(() => {
+        // Ensure all servers are closed to prevent open handles
+        allServers.forEach(s => {
+            if (s && s.listening) s.close();
+        });
+        allServers.length = 0;
+        jest.useRealTimers();
+    });
+
+    it('uses per-appId config if present in Redis', async () => {
+        // Set a custom config for appX
+        mockRedis.set('rateLimitConfig:appX', JSON.stringify({ rules: [ { points: 1, duration: 60 } ] }));
+        // First request should be allowed
+        let res = await client.get('/test/appX');
+        expect(res.status).toBe(200);
+        // Second request should be blocked (limit is 1)
+        res = await client.get('/test/appX');
+        expect(res.status).toBe(429);
+    });
+
+    it('falls back to default config if per-appId config is missing', async () => {
+        // appY has no config, should use default (2 requests allowed)
+        let res = await client.get('/test/appY');
+        expect(res.status).toBe(200);
+        res = await client.get('/test/appY');
+        expect(res.status).toBe(200);
+        // Third request should be blocked
+        res = await client.get('/test/appY');
+        expect(res.status).toBe(429);
+    });
+});
+
+describe('Different rules for appId 90 and 91', () => {
+    let server: Server<typeof IncomingMessage, typeof ServerResponse>;
+    let client: request.SuperTest<request.Test>;
+    let mockRedis: any;
+
+    beforeEach(() => {
+        mockRedis = require('../config/redis');
+        mockRedis.flushall();
+        jest.clearAllTimers();
+        // appId 90: 3 requests per 30 seconds
+        mockRedis.set('rateLimitConfig:90', JSON.stringify({ rules: [ { points: 3, duration: 30 } ] }));
+        // appId 91: 5 requests per 60 seconds
+        mockRedis.set('rateLimitConfig:91', JSON.stringify({ rules: [ { points: 5, duration: 60 } ] }));
+        const testEnv = createTestApp();
+        server = testEnv.server;
+        client = testEnv.client;
+    });
+
+    afterEach(() => {
+        allServers.forEach(s => {
+            if (s && s.listening) s.close();
+        });
+        allServers.length = 0;
+        jest.useRealTimers();
+    });
+
+    it('enforces different rate limits and headers for appId 90 and 91 (exact values)', async () => {
+        // appId 90: 3 requests allowed, 4th blocked
+        let before = Date.now();
+        for (let i = 1; i <= 3; i++) {
+            const res = await client.get('/test/90');
+            expect(res.status).toBe(200);
+            expect(res.headers['x-ratelimit-limit']).toBe('3');
+            expect(res.headers['x-ratelimit-remaining']).toBe((3 - i).toString());
+            const reset = Number(res.headers['x-ratelimit-reset']);
+            expect(reset).toBeGreaterThanOrEqual(before);
+            expect(reset).toBeLessThanOrEqual(before + 31_000); // 30s window + 1s margin
+        }
+        before = Date.now();
+        const blocked90 = await client.get('/test/90');
+        expect(blocked90.status).toBe(429);
+        expect(blocked90.headers['x-ratelimit-limit']).toBe('3');
+        expect(blocked90.headers['x-ratelimit-remaining']).toBe('0');
+        expect(Number(blocked90.headers['retry-after'])).toBeGreaterThanOrEqual(0);
+        const resetBlocked90 = Number(blocked90.headers['x-ratelimit-reset']);
+        expect(resetBlocked90).toBeGreaterThanOrEqual(before);
+        expect(resetBlocked90).toBeLessThanOrEqual(before + 31_000);
+
+        // appId 91: 5 requests allowed, 6th blocked
+        before = Date.now();
+        for (let i = 1; i <= 5; i++) {
+            const res = await client.get('/test/91');
+            expect(res.status).toBe(200);
+            expect(res.headers['x-ratelimit-limit']).toBe('5');
+            expect(res.headers['x-ratelimit-remaining']).toBe((5 - i).toString());
+            const reset = Number(res.headers['x-ratelimit-reset']);
+            expect(reset).toBeGreaterThanOrEqual(before);
+            expect(reset).toBeLessThanOrEqual(before + 61_000); // 60s window + 1s margin
+        }
+        before = Date.now();
+        const blocked91 = await client.get('/test/91');
+        expect(blocked91.status).toBe(429);
+        expect(blocked91.headers['x-ratelimit-limit']).toBe('5');
+        expect(blocked91.headers['x-ratelimit-remaining']).toBe('0');
+        expect(Number(blocked91.headers['retry-after'])).toBeGreaterThanOrEqual(0);
+        const resetBlocked91 = Number(blocked91.headers['x-ratelimit-reset']);
+        expect(resetBlocked91).toBeGreaterThanOrEqual(before);
+        expect(resetBlocked91).toBeLessThanOrEqual(before + 61_000);
+    });
+});
+
+describe('Default rate limit config for unknown appIds', () => {
+    let server: Server<typeof IncomingMessage, typeof ServerResponse>;
+    let client: request.SuperTest<request.Test>;
+    let mockRedis: any;
+
+    beforeEach(() => {
+        mockRedis = require('../config/redis');
+        mockRedis.flushall();
+        jest.clearAllTimers();
+        // Set default config: 2 requests per 20 seconds
+        mockRedis.set('rateLimitConfig:default', JSON.stringify({ rules: [ { points: 2, duration: 20 } ] }));
+        const testEnv = createTestApp();
+        server = testEnv.server;
+        client = testEnv.client;
+    });
+
+    afterEach(() => {
+        allServers.forEach(s => {
+            if (s && s.listening) s.close();
+        });
+        allServers.length = 0;
+        jest.useRealTimers();
+    });
+
+    it('applies default rate limit to appId 123 and 456 (not explicitly configured)', async () => {
+        for (const appId of ['123', '456']) {
+            let before = Date.now();
+            // First request
+            let res = await client.get(`/test/${appId}`);
+            expect(res.status).toBe(200);
+            expect(res.headers['x-ratelimit-limit']).toBe('2');
+            expect(res.headers['x-ratelimit-remaining']).toBe('1');
+            let reset = Number(res.headers['x-ratelimit-reset']);
+            expect(reset).toBeGreaterThanOrEqual(before);
+            expect(reset).toBeLessThanOrEqual(before + 21_000);
+
+            // Second request
+            res = await client.get(`/test/${appId}`);
+            expect(res.status).toBe(200);
+            expect(res.headers['x-ratelimit-limit']).toBe('2');
+            expect(res.headers['x-ratelimit-remaining']).toBe('0');
+            reset = Number(res.headers['x-ratelimit-reset']);
+            expect(reset).toBeGreaterThanOrEqual(before);
+            expect(reset).toBeLessThanOrEqual(before + 21_000);
+
+            // Third request should be blocked
+            before = Date.now();
+            res = await client.get(`/test/${appId}`);
+            expect(res.status).toBe(429);
+            expect(res.headers['x-ratelimit-limit']).toBe('2');
+            expect(res.headers['x-ratelimit-remaining']).toBe('0');
+            expect(Number(res.headers['retry-after'])).toBeGreaterThanOrEqual(0);
+            reset = Number(res.headers['x-ratelimit-reset']);
+            expect(reset).toBeGreaterThanOrEqual(before);
+            expect(reset).toBeLessThanOrEqual(before + 21_000);
+        }
+    });
+});
+
+describe('Changing a rule mid-test and verifying new rule is enforced', () => {
+    let server: Server<typeof IncomingMessage, typeof ServerResponse>;
+    let client: request.SuperTest<request.Test>;
+    let mockRedis: any;
+
+    beforeEach(() => {
+        mockRedis = require('../config/redis');
+        mockRedis.flushall();
+        jest.clearAllTimers();
+        // Initial rule: 2 requests per 30 seconds
+        mockRedis.set('rateLimitConfig:77', JSON.stringify({ rules: [ { points: 2, duration: 30 } ] }));
+        const testEnv = createTestApp();
+        server = testEnv.server;
+        client = testEnv.client;
+    });
+
+    afterEach(() => {
+        allServers.forEach(s => {
+            if (s && s.listening) s.close();
+        });
+        allServers.length = 0;
+        jest.useRealTimers();
+    });
+
+    it('enforces new rule after config is changed in Redis', async () => {
+        // Use up the initial limit
+        await client.get('/test/77'); // 1st
+        await client.get('/test/77'); // 2nd
+        let blocked = await client.get('/test/77'); // 3rd, should be blocked
+        expect(blocked.status).toBe(429);
+        expect(blocked.headers['x-ratelimit-limit']).toBe('2');
+        expect(blocked.headers['x-ratelimit-remaining']).toBe('0');
+
+        // Change the rule: now allow 4 requests per 30 seconds
+        mockRedis.set('rateLimitConfig:77', JSON.stringify({ rules: [ { points: 4, duration: 30 } ] }));
+
+        // The limiter should now allow 2 more requests before blocking again
+        let res = await client.get('/test/77'); // 4th overall, 3rd in new rule
+        expect(res.status).toBe(200);
+        expect(res.headers['x-ratelimit-limit']).toBe('4');
+        expect(res.headers['x-ratelimit-remaining']).toBe('1');
+
+        res = await client.get('/test/77'); // 5th overall, 4th in new rule
+        expect(res.status).toBe(200);
+        expect(res.headers['x-ratelimit-limit']).toBe('4');
+        expect(res.headers['x-ratelimit-remaining']).toBe('0');
+
+        blocked = await client.get('/test/77'); // 6th, should be blocked again
+        expect(blocked.status).toBe(429);
+        expect(blocked.headers['x-ratelimit-limit']).toBe('4');
+        expect(blocked.headers['x-ratelimit-remaining']).toBe('0');
+    });
+});
+
+afterAll(() => {
+    // Close any lingering Redis connections (if any)
+    if (typeof redis.quit === 'function') {
+        redis.quit();
+    }
+    // Ensure all servers are closed to prevent open handles
+    allServers.forEach(s => {
+        if (s && s.listening) s.close();
+    });
+    allServers.length = 0;
+    jest.clearAllTimers();
 });

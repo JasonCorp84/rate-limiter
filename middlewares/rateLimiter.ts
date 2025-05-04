@@ -1,6 +1,7 @@
 import { Middleware, Context, Next } from 'koa';
 import redis from '../config/redis';
 import { validateRateLimitRules, RateLimitRule } from '../utils/rateLimitHelpers';
+import rateLimitLuaScript from '../utils/rateLimitLuaScript';
 
 function buildRedisKey(ruleIdx: number, clientKey: string): string {
     return `swl:${ruleIdx}:${clientKey}`;
@@ -20,48 +21,74 @@ function buildRateLimitHeaders(
     };
 }
 
-const rateLimiter = (rules: RateLimitRule[]): Middleware => {
-    validateRateLimitRules(rules);
-
+const rateLimiter = (): Middleware => {
     return async (ctx: Context, next: Next): Promise<void> => {
         const now = Date.now();
-        const clientKey = `${ctx.ip}:${ctx.params?.applicationId ?? 'unknown'}`;
+        const appId = (ctx.params?.applicationId ?? 'unknown').toLowerCase();
+        const clientKey = `${ctx.ip}:${appId}`;
+        let rules: RateLimitRule[];
+
+        // Fetch per-appId config from Redis, fallback to default
+        try {
+            const configStr = await redis.get(`rateLimitConfig:${appId}`) || await redis.get('rateLimitConfig:default');
+            if (!configStr) {
+                ctx.status = 500;
+                ctx.body = 'Rate limit config not found.';
+                return;
+            }
+            const config = JSON.parse(configStr);
+            rules = config.rules;
+            validateRateLimitRules(rules);
+        } catch (err) {
+            ctx.status = 503;
+            ctx.body = 'Service Unavailable: Rate limiter config error.';
+            ctx.set('Retry-After', '10');
+            return;
+        }
+
         let blocked = false;
         let strictestRuleIdx = 0;
         let strictestRemaining = Number.POSITIVE_INFINITY;
         let strictestReset = 0;
 
-        for (let i = 0; i < rules.length; i++) {
-            const rule = rules[i];
-            const windowStart = now - rule.duration * 1000;
-            const redisKey = buildRedisKey(i, clientKey);
+        try {
+            for (let i = 0; i < rules.length; i++) {
+                const rule = rules[i];
+                const windowStart = now - rule.duration * 1000;
+                const redisKey = buildRedisKey(i, clientKey);
 
-            await redis.zremrangebyscore(redisKey, 0, windowStart);
+                const result = await redis.eval(
+                    rateLimitLuaScript,
+                    1,
+                    redisKey,
+                    now,
+                    windowStart,
+                    rule.points,
+                    rule.duration + 1
+                ) as [number, string | number];
+                const [count, oldestTs] = result;
 
-            const count = await redis.zcard(redisKey);
-
-            if (count >= rule.points) {
-                blocked = true;
-
-                const oldest = await redis.zrange(redisKey, 0, 0, 'WITHSCORES');
-                if (Array.isArray(oldest) && oldest.length === 2) {
-                    const oldestTs = Number(oldest[1]);
-                    const reset = Math.ceil((oldestTs + rule.duration * 1000 - now) / 1000);
+                if (count >= rule.points) {
+                    blocked = true;
+                    const reset = Math.ceil((Number(oldestTs) + rule.duration * 1000 - now) / 1000);
                     if (reset > strictestReset) {
                         strictestReset = reset;
                         strictestRuleIdx = i;
                     }
-                }
-                strictestRemaining = 0;
-            } else {
-                await redis.zadd(redisKey, now, `${now}:${Math.random()}`);
-                await redis.expire(redisKey, rule.duration + 1);
-                if (rule.points - count - 1 < strictestRemaining) {
-                    strictestRemaining = rule.points - count - 1;
-                    strictestRuleIdx = i;
-                    strictestReset = rule.duration;
+                    strictestRemaining = 0;
+                } else {
+                    if (rule.points - count - 1 < strictestRemaining) {
+                        strictestRemaining = rule.points - count - 1;
+                        strictestRuleIdx = i;
+                        strictestReset = rule.duration;
+                    }
                 }
             }
+        } catch (err) {
+            ctx.status = 503;
+            ctx.body = 'Service Unavailable: Rate limiter backend error.';
+            ctx.set('Retry-After', '10');
+            return;
         }
 
         const headers = buildRateLimitHeaders(

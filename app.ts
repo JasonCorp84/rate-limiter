@@ -19,10 +19,7 @@ const PORT = process.env.PORT || 3000;
 
 router.get(
     '/emarsys/:applicationId',
-    rateLimiter([
-        { points: 5, duration: 60 },
-        { points: 20, duration: 300 }
-    ]),
+    rateLimiter(),
     async (ctx: ParameterizedContext) => {
         ctx.body = `Welcome to Emarsys, applicationId: ${ctx.params.applicationId}`;
     }
