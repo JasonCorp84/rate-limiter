@@ -7,7 +7,7 @@ const redis = new Redis({
 });
 
 async function seedConfigs() {
-    // Define all configs in one object for easy editing/testing
+    // Define all configs in one object for easy editing/testing, this is case-insensitive
     const configs: Record<string, { rules: { points: number, duration: number }[] }> = {
         default: { rules: [ { points: 5, duration: 60 }, { points: 20, duration: 300 } ] },
         testApp: { rules: [ { points: 2, duration: 10 } ] },

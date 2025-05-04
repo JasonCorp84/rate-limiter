@@ -43,3 +43,24 @@ npm run dev
 ```
 
 Ensure Redis is running before starting the application.
+
+## Seeding Rate Limit Configs into Redis
+
+Before running the application, you should seed the rate limit configurations into Redis. This ensures that each application ID has the correct rate limiting rules.
+
+1. Make sure Redis is running (see above).
+2. Run the seeding script:
+
+```
+npx ts-node scripts/seedRateLimitConfigs.ts
+```
+
+Or, if you have TypeScript compiled to JavaScript:
+
+```
+node dist/scripts/seedRateLimitConfigs.js
+```
+
+This will populate Redis with the default and per-appId rate limit configs as defined in `scripts/seedRateLimitConfigs.ts`.
+
+> **Note:** The script stores all app IDs in lowercase for case-insensitive matching.
