@@ -79,8 +79,8 @@ describe('Configuration and Initialization', () => {
         mockRedis = require('../config/redis');
         mockRedis.flushall();
         jest.clearAllTimers();
-        // Set up a config for testApp
-        mockRedis.set('rateLimitConfig:testApp', JSON.stringify({ rules: [ { points: 2, duration: 10 } ] }));
+        // Set up a config for testapp (lowercase for case-insensitive logic)
+        mockRedis.set('rateLimitConfig:testapp', JSON.stringify({ rules: [ { points: 2, duration: 10 } ] }));
         const testEnv = createTestApp();
         server = testEnv.server;
         client = testEnv.client;
@@ -542,13 +542,13 @@ describe('Dynamic per-appId config from Redis', () => {
     });
 
     it('uses per-appId config if present in Redis', async () => {
-        // Set a custom config for appX
-        mockRedis.set('rateLimitConfig:appX', JSON.stringify({ rules: [ { points: 1, duration: 60 } ] }));
+        // Set a custom config for appx (lowercase for case-insensitive logic)
+        mockRedis.set('rateLimitConfig:appx', JSON.stringify({ rules: [ { points: 1, duration: 60 } ] }));
         // First request should be allowed
-        let res = await client.get('/test/appX');
+        let res = await client.get('/test/appx');
         expect(res.status).toBe(200);
         // Second request should be blocked (limit is 1)
-        res = await client.get('/test/appX');
+        res = await client.get('/test/appx');
         expect(res.status).toBe(429);
     });
 

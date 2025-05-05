@@ -32,8 +32,9 @@ const rateLimiter = (): Middleware => {
         try {
             const configStr = await redis.get(`rateLimitConfig:${appId}`) || await redis.get('rateLimitConfig:default');
             if (!configStr) {
-                ctx.status = 500;
-                ctx.body = 'Rate limit config not found.';
+                ctx.status = 503;
+                ctx.body = 'Service Unavailable: Rate limit config error.';
+                ctx.set('Retry-After', '10');
                 return;
             }
             const config = JSON.parse(configStr);
